@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Explore U.S. snowfall forecasts and compare them with historical snowfall.">
+<title>Snow Tracker · U.S. snowfall outlook</title>
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./app.js"></script>
+</head>
+<body>
+<header class="masthead"><div class="shell head">
+  <a class="brand" href="./"><span class="mark" aria-hidden="true">❄</span>Snow Tracker</a>
+  <div class="feed"><span id="status" role="status">Connecting to forecast feed…</span><button id="refresh" type="button">Refresh</button></div>
+</div></header>
+<main class="shell">
+  <section class="intro"><p class="eyebrow">UNITED STATES WEATHER</p><h1>Snowfall outlook</h1>
+    <p>Explore upcoming snowfall across the U.S. and see how it compares with recent years.</p>
+  </section>
+  <div class="workspace">
+    <section class="card map-card" aria-labelledby="map-title">
+      <div class="card-head"><div><h2 id="map-title">Forecast map</h2><p>One forecast location per state</p></div>
+      <div class="segmented" id="windows" aria-label="Forecast window"><button data-days="1">1 day</button><button data-days="3" aria-pressed="true">3 days</button><button data-days="7">7 days</button></div></div>
+      <div class="map-surface">
+        <canvas id="map" aria-label="3D U.S. snowfall map. Choose a state using the state selector or click the map."></canvas>
+        <div class="map-tag"><span aria-hidden="true">◈</span> 3D VIEW</div>
+        <div class="map-tools" aria-label="Map controls">
+          <button id="zoom-in" aria-label="Zoom in">+</button>
+          <button id="zoom-out" aria-label="Zoom out">−</button>
+          <button id="tilt" aria-label="Increase map tilt">◩</button>
+          <button id="reset" aria-label="Reset map view">⟲</button>
+        </div>
+        <p id="map-error" class="map-error" hidden>State boundaries are unavailable.</p>
+        <div id="tooltip" class="tooltip" hidden></div>
+        
+      </div>
+      <div class="legend"><span class="legend-title">Forecast snowfall</span><span><i style="--swatch:#314764"></i>0</span><span><i style="--swatch:#527a9f"></i>&lt;1</span><span><i style="--swatch:#63aac9"></i>1–&lt;3</span><span><i style="--swatch:#8de1ea"></i>3–&lt;6</span><span><i style="--swatch:#d4f8ff"></i>6+ in</span><span><i style="--swatch:#29364c"></i>No data</span><span class="map-hint">Drag to rotate · Click a state to explore</span></div>
+    </section>
+    <section class="card detail" aria-labelledby="detail-title">
+      <label for="state">SELECT STATE</label><select id="state"></select>
+      <div class="detail-heading"><h2 id="detail-title"></h2><p id="location"></p></div>
+      <div class="metric">
+        <p id="prediction-label">3-DAY SNOWFALL ESTIMATE</p>
+        <div><strong id="estimate">—</strong> <span>in</span></div>
+        <p id="comparison">Waiting for forecast data…</p>
+      </div>
+      <section class="daily" aria-labelledby="daily-title"><h3 id="daily-title">Daily breakdown</h3><div id="daily"></div></section>
+      <p class="model-note" id="model-note"></p>
+    </section>
+  </div>
+  <section class="card history" aria-labelledby="history-title">
+    <div class="card-head"><div><h2 id="history-title">Historical comparison</h2><p>Snowfall for the same calendar dates, in inches</p></div></div>
+    <div id="history" class="history-content" aria-live="polite"></div>
+  </section>
+  <footer><span>Snow Tracker</span><span>Weather data from <a href="https://open-meteo.com/">Open-Meteo</a> · Boundaries from the <a href="https://github.com/topojson/us-atlas">U.S. Atlas</a></span></footer>
+</main>
+</body>
+</html>
