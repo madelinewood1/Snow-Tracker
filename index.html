@@ -19,10 +19,14 @@
   </section>
   <div class="workspace">
     <section class="card map-card" aria-labelledby="map-title">
-      <div class="card-head"><div><h2 id="map-title">Forecast map</h2><p>One forecast location per state</p></div>
+      <div class="card-head"><div><h2 id="map-title">Forecast map</h2><p id="map-subtitle">One forecast location per state</p></div>
       <div class="segmented" id="windows" aria-label="Forecast window"><button data-days="1">1 day</button><button data-days="3" aria-pressed="true">3 days</button><button data-days="7">7 days</button></div></div>
+      <div class="county-toolbar">
+        <button id="county-toggle" type="button" aria-pressed="false" disabled>Explore counties</button>
+        <span id="county-summary" role="status"></span>
+      </div>
       <div class="map-surface">
-        <canvas id="map" aria-label="3D U.S. snowfall map. Choose a state using the state selector or click the map."></canvas>
+        <canvas id="map" aria-label="3D U.S. snowfall map. Use the state selector and county ranking for keyboard navigation."></canvas>
         <div class="map-tag"><span aria-hidden="true">◈</span> 3D VIEW</div>
         <div class="map-tools" aria-label="Map controls">
           <button id="zoom-in" aria-label="Zoom in">+</button>
@@ -34,7 +38,12 @@
         <div id="tooltip" class="tooltip" hidden></div>
         
       </div>
-      <div class="legend"><span class="legend-title">Forecast snowfall</span><span><i style="--swatch:#314764"></i>0</span><span><i style="--swatch:#527a9f"></i>&lt;1</span><span><i style="--swatch:#63aac9"></i>1–&lt;3</span><span><i style="--swatch:#8de1ea"></i>3–&lt;6</span><span><i style="--swatch:#d4f8ff"></i>6+ in</span><span><i style="--swatch:#29364c"></i>No data</span><span class="map-hint">Drag to rotate · Click a state to explore</span></div>
+      <div class="legend"><span class="legend-title">Forecast snowfall</span><span><i style="--swatch:#314764"></i>0</span><span><i style="--swatch:#527a9f"></i>&lt;1</span><span><i style="--swatch:#63aac9"></i>1–&lt;3</span><span><i style="--swatch:#8de1ea"></i>3–&lt;6</span><span><i style="--swatch:#d4f8ff"></i>6+ in</span><span><i style="--swatch:#29364c"></i>No data</span><span class="map-hint">Drag to rotate · <span id="map-action">Click a state to select it</span></span></div>
+      <section id="county-panel" class="county-panel" aria-labelledby="county-title" hidden>
+        <h3 id="county-title">County snowfall ranking</h3>
+        <p id="county-selection" class="county-selection" aria-live="polite"></p>
+        <ol id="county-ranking" class="county-ranking"></ol>
+      </section>
     </section>
     <section class="card detail" aria-labelledby="detail-title">
       <label for="state">SELECT STATE</label><select id="state"></select>

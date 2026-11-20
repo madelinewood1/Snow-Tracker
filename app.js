@@ -1,5 +1,6 @@
 import {states} from './states.js';
 import {createMap} from './map.js';
+import {countiesIn, countyForecasts, rankCounties} from './counties.js';
 import {forecast, history, historicalWindows, totalSnow} from './weather.js';
 
 const get = id => document.getElementById(id);
@@ -9,7 +10,7 @@ const inches = (cm, digits = 1) => cm === null ? '—' : (cm / 2.54).toFixed(dig
 const dateLabel = new Intl.DateTimeFormat('en-US', {
   weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
 });
-let selected = '08', count = 3, map;
+let selected = '08', count = 3, map, countyView;
 
 function element(tag, content, className) {
   const node = document.createElement(tag);
@@ -76,7 +77,11 @@ function render() {
     }
   }
   const values = new Map(states.map(({id}) => [id, totalSnow(forecasts.get(id), count)]));
-  map?.update(selected, values);
+  if (countyView) renderCounties();
+  else {
+    get('county-toggle').textContent = `Explore ${state.name} counties`;
+    map?.update(selected, values);
+  }
 }
 
 async function loadHistory(id) {
@@ -101,9 +106,102 @@ async function loadHistory(id) {
   if (id === selected) render();
 }
 
+function renderCounties() {
+  const {counties, selectedId, stateId, result, loading, error} = countyView;
+  const state = byId.get(stateId);
+  const ranking = rankCounties(counties, result?.days, count);
+  const available = ranking.filter(county => county.snow !== null).length;
+  get('county-title').textContent = `${state.name} · ${count}-day county snowfall`;
+  get('county-summary').textContent = error ? 'County boundaries unavailable'
+    : loading ? 'Loading county forecasts…'
+    : result?.refreshFailed && available ? `${available}/${ranking.length} forecasts available · refresh incomplete`
+    : available ? `${available}/${ranking.length} forecasts available`
+    : 'County forecasts unavailable';
+
+  const active = ranking.find(county => county.id === selectedId);
+  get('county-selection').textContent = active
+    ? `${active.name} · ${active.snow === null ? 'Forecast unavailable' : `${inches(active.snow)} in forecast`}`
+    : 'Select a county on the map or in the ranking.';
+  const list = get('county-ranking');
+  const scroll = list.scrollTop;
+  const focused = list.contains(document.activeElement);
+  list.replaceChildren(...ranking.map(county => {
+    const item = element('li');
+    const button = element('button');
+    button.type = 'button';
+    button.dataset.county = county.id;
+    button.setAttribute('aria-pressed', county.id === selectedId);
+    button.append(element('span', county.name),
+      element('strong', county.snow === null ? 'No data' : `${inches(county.snow)} in`));
+    item.append(button);
+    return item;
+  }));
+  if (focused) list.querySelector(`[data-county="${selectedId}"]`)?.focus({preventScroll: true});
+  list.scrollTop = scroll;
+  map?.update(selectedId, new Map(ranking.map(county => [county.id, county.snow])));
+}
+
+async function refreshCounties(view, force = false) {
+  if (view.refreshing || !view.counties.length) return;
+  view.refreshing = true;
+  view.result = await countyForecasts(view.stateId, view.counties, force);
+  view.refreshing = false;
+  view.loading = false;
+  if (countyView === view) renderCounties();
+}
+
+async function showCounties() {
+  const view = {stateId: selected, counties: [], loading: true};
+  countyView = view;
+  map.setCounties([]);
+  get('tooltip').hidden = true;
+  get('county-toggle').textContent = 'Back to U.S. map';
+  get('county-toggle').setAttribute('aria-pressed', 'true');
+  get('county-panel').hidden = false;
+  get('map-subtitle').textContent = `${byId.get(selected).name} · one forecast location per county or equivalent`;
+  get('map-action').textContent = 'Click a county to select it';
+  get('county-ranking').scrollTop = 0;
+  renderCounties();
+  try {
+    view.counties = await countiesIn(view.stateId);
+    if (countyView !== view) return;
+    if (!view.counties.length) throw new Error('No county boundaries for the selected state');
+    map.setCounties(view.counties);
+    renderCounties();
+    await refreshCounties(view);
+  } catch (error) {
+    console.warn('County view unavailable', error);
+    view.loading = false;
+    view.error = true;
+    if (countyView === view) renderCounties();
+  }
+}
+
+function hideCounties() {
+  countyView = undefined;
+  map.setCounties(null);
+  get('tooltip').hidden = true;
+  get('county-toggle').setAttribute('aria-pressed', 'false');
+  get('county-panel').hidden = true;
+  get('county-summary').textContent = '';
+  get('map-subtitle').textContent = 'One forecast location per state';
+  get('map-action').textContent = 'Click a state to select it';
+  render();
+}
+
+function pickCounty(id) {
+  if (!countyView?.counties.some(county => county.id === id)) return;
+  countyView.selectedId = id;
+  get('tooltip').hidden = true;
+  renderCounties();
+  get('county-ranking').querySelector(`[data-county="${id}"]`)
+    ?.scrollIntoView({block: 'nearest', container: 'nearest'});
+}
+
 function select(id) {
   if (!byId.has(id)) return;
   selected = id;
+  if (countyView) void showCounties();
   get('tooltip').hidden = true;
   render();
   void loadHistory(id);
@@ -114,6 +212,7 @@ async function refresh() {
   if (button.disabled) return;
   button.disabled = true;
   status.textContent = 'Updating forecasts…';
+  if (countyView) void refreshCounties(countyView, true);
   try {
     const results = await forecast(states);
     results.forEach((days, index) => forecasts.set(states[index].id, days));
@@ -131,11 +230,11 @@ async function refresh() {
 
 function hover(id, x, y) {
   const tooltip = get('tooltip');
-  tooltip.hidden = !byId.has(id);
+  const location = countyView ? countyView.counties.find(county => county.id === id) : byId.get(id);
+  tooltip.hidden = !location;
   if (tooltip.hidden) return;
-  const state = byId.get(id);
-  const snow = totalSnow(forecasts.get(id), count);
-  tooltip.textContent = `${state.name} · ${snow === null ? 'No forecast' : `${inches(snow)} in`}`;
+  const snow = totalSnow(countyView ? countyView.result?.days.get(id) : forecasts.get(id), count);
+  tooltip.textContent = `${location.name} · ${snow === null ? 'No forecast' : `${inches(snow)} in`}`;
   tooltip.style.left = `${Math.max(6, Math.min(x + 10, get('map').clientWidth - tooltip.offsetWidth - 6))}px`;
   tooltip.style.top = `${Math.max(6, y - 39)}px`;
 }
@@ -153,13 +252,19 @@ get('windows').addEventListener('click', event => {
   render();
 });
 get('refresh').addEventListener('click', refresh);
+get('county-toggle').addEventListener('click', () => countyView ? hideCounties() : void showCounties());
+get('county-ranking').addEventListener('click', event => {
+  const button = event.target.closest('[data-county]');
+  if (button) pickCounty(button.dataset.county);
+});
 get('zoom-in').addEventListener('click', () => map?.zoom(0.15));
 get('zoom-out').addEventListener('click', () => map?.zoom(-0.15));
 get('tilt').addEventListener('click', () => map?.tilt(0.15));
 get('reset').addEventListener('click', () => map?.reset());
 render();
-createMap(get('map'), states.map(state => state.id), select, hover).then(instance => {
+createMap(get('map'), states.map(state => state.id), id => countyView ? pickCounty(id) : select(id), hover).then(instance => {
   map = instance;
+  get('county-toggle').disabled = false;
   render();
 }).catch(error => {
   console.warn(error);
