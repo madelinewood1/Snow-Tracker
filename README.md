@@ -1,6 +1,6 @@
 # Snow Tracker
 
-Interactive 3D U.S. snowfall outlook with 1-, 3-, and 7-day totals and comparisons for the same calendar dates over the previous three years.
+Explore annual snowfall records on an interactive 3D map of all 50 U.S. states. Pick a calendar year from 2000 through 2025 or compare average annual snowfall over 5, 10, or 20 years ending in that year. Select a state and choose **Explore counties** to see the county ranking and drill into a county's annual history.
 
 Run from this directory with Python 3.
 
@@ -8,18 +8,17 @@ Run from this directory with Python 3.
 python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
-Open [Snow Tracker](http://127.0.0.1:8765). The browser needs an internet connection for weather data. No API key or JavaScript build is required.
+Open [Snow Tracker](http://127.0.0.1:8765). The site also runs on GitHub Pages. The bundled data requires no runtime weather API, API key, or build.
 
-## Data and model
+## Data and coverage
 
-- Each state uses one labeled representative location. Map colors and height show the provider's forecast at that location. The highlighted state marks the selection.
-- The selected location compares upcoming local dates with daily ERA5 snowfall reanalysis from the previous three years. Open-Meteo supplies the forecast, archived forecasts, and reanalysis. Snowfall totals describe newly fallen snow. Snow on the ground can differ due to melting and settling.
-- The model fits one regularized scaling coefficient using archived snowfall forecasts paired with reanalysis for the first two years. It uses the adjustment only if it reduces mean absolute error in the third year and enough snow days exist in both periods. Otherwise, it uses the provider forecast. The validation measures agreement with reanalysis on the historical archive. Performance on current multi-day forecasts has not been established.
-- The app refreshes forecasts every 30 minutes while visible. A failed refresh preserves the last successful forecast and identifies it as such. Missing values are shown separately from zero snowfall.
-- State boundaries come from [U.S. Atlas](https://github.com/topojson/us-atlas), derived from U.S. Census Bureau cartographic boundaries. Alaska and Hawaii appear in insets.
+- The map uses station-level annual snowfall, in inches, from [NOAA NCEI Global Summary of the Year](https://www.ncei.noaa.gov/access/search/datasets/global-summary-of-the-year/). These records describe snow that fell during the calendar year. The app displays historical comparisons and has no future annual forecast.
+- Each state and county uses a fixed representative station from the same state. Station selection favors proximity to the location's reference point and completeness during the displayed period. County stations can lie in neighboring counties and are limited to about 149 miles from the reference point. The selected station and distance appear on the dashboard. States and counties can vary substantially with elevation.
+- Missing annual records stay missing. Period averages use the available years within the selected date range, with coverage shown in the county view and detail panel.
+- County boundaries and points follow [U.S. Atlas](https://github.com/topojson/us-atlas), derived from Census cartographic boundaries. Some county equivalents reflect historical boundaries from that release.
 
-## County view
+Rebuild the annual dataset with the [NOAA bulk station archive](https://www.ncei.noaa.gov/data/global-summary-of-the-year/archive/gsoy-latest.tar.gz) and the last complete calendar year you wish to include.
 
-Select a state and choose **Explore counties** to zoom the map. County and county-equivalent forecasts are ranked by snowfall for the selected 1-, 3-, or 7-day window. Select a county on the map or in the ranking to highlight it. Each forecast uses a single point inside the largest mapped part of that county. Totals can vary elsewhere in the county, especially with elevation. County rankings use the direct provider forecast, while the state panel retains its existing historical comparison and calibration.
-
-County boundaries come from the same U.S. Atlas release as the state boundaries and reflect that release's geography. County data loads on demand and is cached for 30 minutes. The national map and state selector remain available if county data cannot load.
+```sh
+python3 build-annual-data.py /path/to/gsoy-latest.tar.gz --last-year 2025
+```

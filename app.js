@@ -1,16 +1,12 @@
 import {states} from './states.js';
 import {createMap} from './map.js';
-import {countiesIn, countyForecasts, rankCounties} from './counties.js';
-import {forecast, history, historicalWindows, totalSnow} from './weather.js';
+import {countiesIn} from './counties.js';
+import {loadAnnualSnow, annualSummary} from './weather.js';
 
 const get = id => document.getElementById(id);
 const byId = new Map(states.map(state => [state.id, state]));
-const forecasts = new Map(), histories = new Map();
-const inches = (cm, digits = 1) => cm === null ? '—' : (cm / 2.54).toFixed(digits);
-const dateLabel = new Intl.DateTimeFormat('en-US', {
-  weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
-});
-let selected = '08', count = 3, map, countyView;
+const inches = mm => mm === null ? '—' : (mm / 25.4).toFixed(1);
+let selected = '08', year, span = 20, map, data, countyView;
 
 function element(tag, content, className) {
   const node = document.createElement(tag);
@@ -19,109 +15,68 @@ function element(tag, content, className) {
   return node;
 }
 
-function render() {
-  const state = byId.get(selected);
-  const days = forecasts.get(selected);
-  const previous = histories.get(selected);
-  const calibration = previous?.calibration;
-  const factor = calibration?.factor ?? 1;
-  const raw = totalSnow(days, count);
-  const estimate = raw === null ? null : raw * factor;
-  const historical = previous?.records && days
-    ? historicalWindows(previous.records, days[0].date, count) : [];
-  const comparable = historical.filter(item => item.snow !== null);
-  const mean = comparable.length
-    ? comparable.reduce((sum, item) => sum + item.snow, 0) / comparable.length : null;
-
-  get('state').value = selected;
-  get('detail-title').textContent = state.name;
-  get('location').textContent = `Forecast location · ${state.city}`;
-  get('prediction-label').textContent = `${count}-DAY SNOWFALL ESTIMATE`;
-  get('estimate').textContent = inches(estimate);
-  get('comparison').textContent = estimate === null ? 'Forecast unavailable for this window'
-    : mean === null ? 'Historical average unavailable'
-    : `${inches(mean)} in average across ${comparable.length} comparable years`;
-  get('model-note').textContent = estimate === null ? '' : calibration
-    ? calibration.factor !== 1
-      ? `Calibrated from ${inches(raw)} in. ${calibration.validationYear} daily error was ${inches(calibration.fittedError, 3)} in vs. ${inches(calibration.baselineError, 3)} in for archived forecasts.`
-      : 'Using the provider forecast. Calibration did not improve the held-out comparison.'
-    : previous && !previous.loading ? 'Using the provider forecast. Calibration is unavailable for this location.'
-    : 'Using the provider forecast while historical data loads.';
-  const daily = get('daily');
-  daily.replaceChildren(...(days ? days.slice(0, count).map(day => {
-    const row = element('div', undefined, 'daily-row');
-    row.append(element('span', dateLabel.format(new Date(day.date))),
-      element('span', Number.isFinite(day.temperature) ? `${Math.round(day.temperature * 9 / 5 + 32)}°F` : '—'),
-      element('strong', Number.isFinite(day.snow) ? `${inches(day.snow * factor)} in` : '—'));
-    return row;
-  }) : [element('p', 'Daily forecast unavailable.', 'empty')]));
-
-  const chart = get('history');
-  chart.replaceChildren();
-  if (!historical.length) {
-    chart.append(element('p', !previous ? 'The forecast feed sets the dates for comparison.'
-      : previous.loading ? `Loading historical snowfall for ${state.city}…`
-      : 'Historical comparison is unavailable for this forecast window.', 'empty'));
-  } else {
-    const rows = [...historical.map(item => [String(item.year), item.snow]), ['Estimate', estimate]];
-    const max = Math.max(1, ...rows.map(([, snow]) => snow ?? 0));
-    for (const [label, snow] of rows) {
-      const row = element('div', undefined, 'history-row');
-      const track = element('div', undefined, 'track');
-      track.setAttribute('aria-hidden', 'true');
-      const bar = element('div', undefined, 'bar');
-      bar.style.width = `${(snow ?? 0) / max * 100}%`;
-      track.append(bar);
-      row.append(element('span', label), track, element('strong', snow === null ? '—' : `${inches(snow)} in`));
-      chart.append(row);
-    }
-  }
-  const values = new Map(states.map(({id}) => [id, totalSnow(forecasts.get(id), count)]));
-  if (countyView) renderCounties();
-  else {
-    get('county-toggle').textContent = `Explore ${state.name} counties`;
-    map?.update(selected, values);
-  }
+function addOptions(select, options) {
+  select.replaceChildren(...options.map(([value, label]) => {
+    const option = element('option', label);
+    option.value = value;
+    return option;
+  }));
 }
 
-async function loadHistory(id) {
-  const first = forecasts.get(id)?.[0]?.date;
-  if (!first) return;
-  const year = Number(first.slice(0, 4));
-  const december = first.slice(5, 7) === '12';
-  const key = `${year}-${december}`;
-  const cached = histories.get(id);
-  if (cached?.key === key && (cached.loading || cached.records)) return;
-  const pending = {key, loading: true};
-  histories.set(id, pending);
-  if (id === selected) render();
-  let result = {key};
-  try {
-    result = {key, ...await history(byId.get(id), year, december)};
-  } catch (error) {
-    console.warn('Historical feed unavailable', error);
-  }
-  if (histories.get(id) !== pending) return;
-  histories.set(id, result);
-  if (id === selected) render();
+function summarize(id, selectedYear = year, selectedSpan = span) {
+  return data ? annualSummary(data, id, selectedYear, selectedSpan)
+    : {snow: null, available: 0, years: 0};
+}
+
+function periodLabel() {
+  if (!data) return '';
+  if (span === 1) return String(year);
+  return `${Math.max(data.firstYear, year - span + 1)}–${year} average`;
+}
+
+function renderHistory(location) {
+  const section = get('history');
+  const scroll = section.scrollTop;
+  const focused = section.contains(document.activeElement);
+  const rows = data ? Array.from({length: data.lastYear - data.firstYear + 1}, (_, index) => {
+    const value = data.lastYear - index;
+    return {year: value, snow: summarize(location.id, value, 1).snow};
+  }) : [];
+  get('history-subtitle').textContent = `${location.name} · select a year to update the map`;
+  const scale = Math.max(25.4, ...rows.map(row => row.snow ?? 0));
+  section.replaceChildren(...rows.map(record => {
+    const button = element('button', undefined, 'history-row');
+    button.type = 'button';
+    button.dataset.year = record.year;
+    button.setAttribute('aria-pressed', record.year === year);
+    const track = element('span', undefined, 'track');
+    track.setAttribute('aria-hidden', 'true');
+    const bar = element('span', undefined, 'bar');
+    bar.style.width = `${100 * (record.snow ?? 0) / scale}%`;
+    track.append(bar);
+    button.append(element('span', record.year), track,
+      element('strong', record.snow === null ? 'No data' : `${inches(record.snow)} in`));
+    return button;
+  }));
+  section.scrollTop = scroll;
+  if (focused) section.querySelector(`[data-year="${year}"]`)?.focus({preventScroll: true});
 }
 
 function renderCounties() {
-  const {counties, selectedId, stateId, result, loading, error} = countyView;
-  const state = byId.get(stateId);
-  const ranking = rankCounties(counties, result?.days, count);
+  const {counties, selectedId, loading, error} = countyView;
+  const state = byId.get(selected);
+  const ranking = counties.map(county => ({...county, snow: summarize(county.id).snow}))
+    .sort((a, b) => (b.snow ?? -1) - (a.snow ?? -1) || a.name.localeCompare(b.name));
   const available = ranking.filter(county => county.snow !== null).length;
-  get('county-title').textContent = `${state.name} · ${count}-day county snowfall`;
+  get('county-title').textContent = `${state.name} · ${periodLabel()}`;
   get('county-summary').textContent = error ? 'County boundaries unavailable'
-    : loading ? 'Loading county forecasts…'
-    : result?.refreshFailed && available ? `${available}/${ranking.length} forecasts available · refresh incomplete`
-    : available ? `${available}/${ranking.length} forecasts available`
-    : 'County forecasts unavailable';
-
+    : loading ? 'Loading county boundaries…'
+    : `${available} of ${ranking.length} counties have records for this period`;
   const active = ranking.find(county => county.id === selectedId);
   get('county-selection').textContent = active
-    ? `${active.name} · ${active.snow === null ? 'Forecast unavailable' : `${inches(active.snow)} in forecast`}`
-    : 'Select a county on the map or in the ranking.';
+    ? `${active.name} · ${active.snow === null ? 'No data' : `${inches(active.snow)} in per year`}`
+    : 'Select a county to see its annual records and weather station.';
+
   const list = get('county-ranking');
   const scroll = list.scrollTop;
   const focused = list.contains(document.activeElement);
@@ -136,45 +91,61 @@ function renderCounties() {
     item.append(button);
     return item;
   }));
-  if (focused) list.querySelector(`[data-county="${selectedId}"]`)?.focus({preventScroll: true});
   list.scrollTop = scroll;
+  if (focused) list.querySelector(`[data-county="${selectedId}"]`)?.focus({preventScroll: true});
   map?.update(selectedId, new Map(ranking.map(county => [county.id, county.snow])));
 }
 
-async function refreshCounties(view, force = false) {
-  if (view.refreshing || !view.counties.length) return;
-  view.refreshing = true;
-  view.result = await countyForecasts(view.stateId, view.counties, force);
-  view.refreshing = false;
-  view.loading = false;
-  if (countyView === view) renderCounties();
+function render() {
+  const state = byId.get(selected);
+  const county = countyView?.counties.find(item => item.id === countyView.selectedId);
+  const location = county ?? state;
+  const {stationName, distance, snow, available, years} = summarize(location.id);
+  get('state').value = selected;
+  get('detail-title').textContent = county ? `${county.name}, ${state.name}` : state.name;
+  get('location').textContent = stationName ? `NOAA station · ${stationName.replace(/ US$/, '')}`
+    : data ? 'No representative station' : 'Loading station records…';
+  get('prediction-label').textContent = !data ? 'ANNUAL SNOWFALL' : span === 1 ? `${year} ANNUAL SNOWFALL`
+    : `${periodLabel().toUpperCase()} · INCHES PER YEAR`;
+  get('estimate').textContent = inches(snow);
+  get('comparison').textContent = !data ? ''
+    : span === 1 ? (available ? 'Calendar-year station total' : 'No annual record')
+    : `${available} of ${years} calendar years reported`;
+  get('model-note').textContent = stationName
+    ? `One representative station, ${distance} mi from the ${county ? 'county reference point' : `${state.city} reference point`}. Local totals can vary with elevation and distance.`
+    : 'Missing station records appear as no data.';
+  get('county-toggle').disabled = !map || !data;
+  if (countyView) renderCounties();
+  else {
+    get('county-toggle').textContent = `Explore ${state.name} counties`;
+    map?.update(selected, new Map(states.map(({id}) => [id, summarize(id).snow])));
+  }
+  renderHistory(location);
 }
 
 async function showCounties() {
-  const view = {stateId: selected, counties: [], loading: true};
+  const view = {counties: [], loading: true};
   countyView = view;
   map.setCounties([]);
   get('tooltip').hidden = true;
   get('county-toggle').textContent = 'Back to U.S. map';
   get('county-toggle').setAttribute('aria-pressed', 'true');
   get('county-panel').hidden = false;
-  get('map-subtitle').textContent = `${byId.get(selected).name} · one forecast location per county or equivalent`;
+  get('map-subtitle').textContent = `${byId.get(selected).name} · representative weather stations`;
   get('map-action').textContent = 'Click a county to select it';
   get('county-ranking').scrollTop = 0;
-  renderCounties();
+  render();
   try {
-    view.counties = await countiesIn(view.stateId);
+    view.counties = await countiesIn(selected);
     if (countyView !== view) return;
     if (!view.counties.length) throw new Error('No county boundaries for the selected state');
     map.setCounties(view.counties);
-    renderCounties();
-    await refreshCounties(view);
   } catch (error) {
     console.warn('County view unavailable', error);
-    view.loading = false;
     view.error = true;
-    if (countyView === view) renderCounties();
   }
+  view.loading = false;
+  if (countyView === view) render();
 }
 
 function hideCounties() {
@@ -184,48 +155,37 @@ function hideCounties() {
   get('county-toggle').setAttribute('aria-pressed', 'false');
   get('county-panel').hidden = true;
   get('county-summary').textContent = '';
-  get('map-subtitle').textContent = 'One forecast location per state';
+  get('map-subtitle').textContent = 'Representative weather stations';
   get('map-action').textContent = 'Click a state to select it';
   render();
 }
 
-function pickCounty(id) {
+function selectState(id) {
+  if (!byId.has(id)) return;
+  selected = id;
+  get('tooltip').hidden = true;
+  if (countyView) void showCounties();
+  else render();
+}
+
+function selectCounty(id) {
   if (!countyView?.counties.some(county => county.id === id)) return;
   countyView.selectedId = id;
   get('tooltip').hidden = true;
-  renderCounties();
-  get('county-ranking').querySelector(`[data-county="${id}"]`)
-    ?.scrollIntoView({block: 'nearest', container: 'nearest'});
+  render();
 }
 
-function select(id) {
-  if (!byId.has(id)) return;
-  selected = id;
-  if (countyView) void showCounties();
+function setYear(value) {
+  year = Number(value);
+  get('year').value = year;
+  const periods = [...get('span').options];
+  for (const option of periods) option.disabled = Number(option.value) > year - data.firstYear + 1;
+  if (periods.find(option => Number(option.value) === span).disabled) {
+    span = Number(periods.filter(option => !option.disabled).at(-1).value);
+    get('span').value = span;
+  }
   get('tooltip').hidden = true;
   render();
-  void loadHistory(id);
-}
-
-async function refresh() {
-  const button = get('refresh'), status = get('status');
-  if (button.disabled) return;
-  button.disabled = true;
-  status.textContent = 'Updating forecasts…';
-  if (countyView) void refreshCounties(countyView, true);
-  try {
-    const results = await forecast(states);
-    results.forEach((days, index) => forecasts.set(states[index].id, days));
-    const time = new Intl.DateTimeFormat('en-US', {hour: 'numeric', minute: '2-digit'}).format(new Date());
-    status.textContent = `Updated ${time}`;
-    render();
-    void loadHistory(selected);
-  } catch (error) {
-    console.warn('Forecast feed unavailable', error);
-    status.textContent = forecasts.size ? 'Refresh failed · showing last forecast' : 'Forecast feed unavailable';
-  } finally {
-    button.disabled = false;
-  }
 }
 
 function hover(id, x, y) {
@@ -233,42 +193,58 @@ function hover(id, x, y) {
   const location = countyView ? countyView.counties.find(county => county.id === id) : byId.get(id);
   tooltip.hidden = !location;
   if (tooltip.hidden) return;
-  const snow = totalSnow(countyView ? countyView.result?.days.get(id) : forecasts.get(id), count);
-  tooltip.textContent = `${location.name} · ${snow === null ? 'No forecast' : `${inches(snow)} in`}`;
+  const {snow} = summarize(id);
+  tooltip.textContent = `${location.name} · ${snow === null ? 'No data' : `${inches(snow)} in`}`;
   tooltip.style.left = `${Math.max(6, Math.min(x + 10, get('map').clientWidth - tooltip.offsetWidth - 6))}px`;
   tooltip.style.top = `${Math.max(6, y - 39)}px`;
 }
 
-get('state').replaceChildren(...states.map(state => {
-  const option = element('option', state.name);
-  option.value = state.id;
-  return option;
-}));
-get('state').addEventListener('change', event => select(event.target.value));
-get('windows').addEventListener('click', event => {
-  if (!event.target.matches('[data-days]')) return;
-  count = Number(event.target.dataset.days);
-  for (const button of get('windows').children) button.setAttribute('aria-pressed', button === event.target);
+addOptions(get('state'), states.map(state => [state.id, state.name]));
+get('state').addEventListener('change', event => selectState(event.target.value));
+get('year').addEventListener('change', event => setYear(event.target.value));
+get('span').addEventListener('change', event => {
+  span = Number(event.target.value);
+  get('tooltip').hidden = true;
   render();
 });
-get('refresh').addEventListener('click', refresh);
+get('history').addEventListener('click', event => {
+  const button = event.target.closest('[data-year]');
+  if (!button) return;
+  span = 1;
+  get('span').value = '1';
+  setYear(button.dataset.year);
+});
 get('county-toggle').addEventListener('click', () => countyView ? hideCounties() : void showCounties());
 get('county-ranking').addEventListener('click', event => {
   const button = event.target.closest('[data-county]');
-  if (button) pickCounty(button.dataset.county);
+  if (button) selectCounty(button.dataset.county);
 });
 get('zoom-in').addEventListener('click', () => map?.zoom(0.15));
 get('zoom-out').addEventListener('click', () => map?.zoom(-0.15));
 get('tilt').addEventListener('click', () => map?.tilt(0.15));
 get('reset').addEventListener('click', () => map?.reset());
 render();
-createMap(get('map'), states.map(state => state.id), id => countyView ? pickCounty(id) : select(id), hover).then(instance => {
-  map = instance;
-  get('county-toggle').disabled = false;
-  render();
+
+createMap(get('map'), states.map(state => state.id), id => countyView ? selectCounty(id) : selectState(id), hover)
+  .then(instance => {
+    map = instance;
+    render();
+  }).catch(error => {
+    console.warn(error);
+    get('map-error').hidden = false;
+  });
+
+loadAnnualSnow().then(dataset => {
+  data = dataset;
+  addOptions(get('year'), Array.from({length: data.lastYear - data.firstYear + 1}, (_, index) => {
+    const value = data.lastYear - index;
+    return [value, String(value)];
+  }));
+  get('year').disabled = false;
+  get('span').disabled = false;
+  get('dataset-status').textContent = `NOAA records · ${data.firstYear}–${data.lastYear}`;
+  setYear(data.lastYear);
 }).catch(error => {
   console.warn(error);
-  get('map-error').hidden = false;
+  get('dataset-status').textContent = 'Annual records unavailable';
 });
-void refresh();
-setInterval(() => { if (!document.hidden) void refresh(); }, 30 * 60 * 1000);

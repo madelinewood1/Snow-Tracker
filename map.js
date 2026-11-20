@@ -25,8 +25,8 @@ export function decode(topology, layer, stride = 1) {
 const colors = ['#314764', '#527a9f', '#63aac9', '#8de1ea', '#d4f8ff'];
 function shade(value) {
   if (value === null) return '#29364c';
-  const inches = value / 2.54;
-  return colors[inches === 0 ? 0 : inches < 1 ? 1 : inches < 3 ? 2 : inches < 6 ? 3 : 4];
+  const inches = value / 25.4;
+  return colors[inches === 0 ? 0 : inches < 12 ? 1 : inches < 36 ? 2 : inches < 72 ? 3 : 4];
 }
 
 export async function createMap(canvas, stateIds, onSelect, onHover) {
@@ -73,7 +73,7 @@ export async function createMap(canvas, stateIds, onSelect, onHover) {
     context.clearRect(0, 0, width, height);
     paths = geography.map(state => {
       const snow = values.get(state.id) ?? null;
-      const depth = 19 + Math.min(85, (snow ?? 0) * 2) + (state.id === selected ? 13 : 0);
+      const depth = 19 + Math.min(85, (snow ?? 0) * 0.022) + (state.id === selected ? 13 : 0);
       return {...state, depth, snow};
     }).sort((a, b) => a.depth - b.depth);
     for (let level = 0; level < Math.max(...paths.map(state => state.depth)); level += 9) {
